@@ -118,6 +118,9 @@ export type Settings = {
   free_floor_min: number;
   obarts_points: number | null;
   golf_handicap: number | null;
+  /** When the gym is actually open. Nothing gets scheduled outside it. */
+  gym_open: string;
+  gym_close: string;
 };
 
 export type SessionRow = {
@@ -209,6 +212,8 @@ export async function getSettings(): Promise<Settings> {
     free_floor_min: Number(s.free_floor_min ?? 120),
     obarts_points: n(s.obarts_points),
     golf_handicap: n(s.golf_handicap),
+    gym_open: s.gym_open ?? '06:00',
+    gym_close: s.gym_close ?? '22:00',
   };
 }
 

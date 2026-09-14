@@ -28,6 +28,7 @@ import { buildDay, nowCard, type DayPlan, type NowCard, type Block } from './pla
 import { scoreDay, trend, type DayScore } from './score';
 import { progressOf, goalsTouchedBy, type Goal, type GoalProgress } from './goals';
 import { toMin } from './clock';
+import { recoveryFor, type Recommendation } from './spa';
 
 export type Today = {
   day: string;
@@ -50,6 +51,8 @@ export type Today = {
   goals: GoalProgress[];
   /** The single most important thing today, and why it is that. */
   priority: { title: string; detail: string; kind: string } | null;
+  /** What to do with the spa today — and what not to. */
+  recovery: Recommendation;
 };
 
 function partOf(now: number): Today['partOfDay'] {
@@ -108,6 +111,8 @@ export async function loadToday(dayIso?: string): Promise<Today> {
       rpmDailyH: settings.rpm_daily_h,
       workCapH: settings.work_cap_h,
       freeFloorMin: settings.free_floor_min,
+      gymOpen: settings.gym_open,
+      gymClose: settings.gym_close,
     },
     wakeActual: readinessRow?.up_at ?? readinessRow?.woke_at ?? null,
     readiness,
@@ -168,6 +173,16 @@ export async function loadToday(dayIso?: string): Promise<Today> {
 
   const priority = pickPriority(plan, readiness, knee);
 
+  const recovery = recoveryFor({
+    band: readiness?.band ?? null,
+    illness: readinessRow?.illness ?? false,
+    soreness: readinessRow?.soreness ?? null,
+    sleepH,
+    liftedToday: plan.trainMinutes > 0 || trainedMin > 0,
+    daysToRace: ctx.daysToNext,
+    raceFinished: ctx.daysToNext === 0 && now >= 17 * 60,
+  });
+
   return {
     day,
     now,
@@ -186,6 +201,7 @@ export async function loadToday(dayIso?: string): Promise<Today> {
     scoreTrend: trend(scores.map((s) => ({ day: s.day, score: s.score }))),
     goals: goalViews,
     priority,
+    recovery,
   };
 }
 

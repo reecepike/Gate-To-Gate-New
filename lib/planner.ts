@@ -32,6 +32,7 @@ import { addDays, daysBetween, dow } from './plan';
 import { Span, findSpan, length, merge, subtract, toHHMM, toMin, hm, totalMinutes } from './clock';
 import type { Job } from './work';
 import type { Verdict } from './readiness';
+import { SPA_WEEK, withinHours } from './spa';
 
 /* -------------------------------------------------------------- types */
 
@@ -91,6 +92,9 @@ export type PlanSettings = {
   workCapH: number;
   /** Minutes of unstructured time the day must keep. */
   freeFloorMin: number;
+  /** When the gym is open. Nothing that needs it gets placed outside. */
+  gymOpen: string;
+  gymClose: string;
 };
 
 export type BalanceSignal = {
@@ -244,6 +248,10 @@ export function buildDay(i: PlanInputs): DayPlan {
   const wake = toMin(i.wakeActual ?? s.wake, 450);
   const bed = toMin(s.bed, 1395);
   const dayWindow: Span = { start: wake, end: bed };
+  // Anything needing the building has a narrower window than the day does.
+  const gymOpen = toMin(s.gymOpen, 6 * 60);
+  const gymClose = toMin(s.gymClose, 22 * 60);
+  const gymWindow: Span = { start: Math.max(wake, gymOpen), end: Math.min(bed, gymClose) };
   const weekday = dow(i.day);
   const isWorkday = weekday >= 1 && weekday <= 5;
 
@@ -381,7 +389,7 @@ export function buildDay(i: PlanInputs): DayPlan {
   if (trainingSettled) {
     trainMinutes = settled.minutesFor((b) => b.kind === 'train');
   } else if (i.training && band !== 'red') {
-    const free = subtract(dayWindow, placed, 20);
+    const free = subtract(gymWindow, placed, 20);
     // Afternoon by preference — far enough from breakfast to have digested,
     // early enough that it is not competing with the evening.
     const spot = findSpan(free, i.training.minutes, toMin('14:00'));
@@ -396,7 +404,9 @@ export function buildDay(i: PlanInputs): DayPlan {
       }));
       trainMinutes = i.training.minutes;
     } else {
-      notes.push(`${i.training.title} could not be placed — the fixed commitments fill the day. Move something or accept it slides.`);
+      notes.push(
+        `${i.training.title} could not be placed between ${s.gymOpen} and ${s.gymClose} without clashing with something fixed. Move a commitment or accept it slides — the plan will not pretend you trained in a closed gym.`,
+      );
     }
   } else if (i.training && band === 'red' && !trainingSettled) {
     const free = subtract(dayWindow, placed, 20);
@@ -412,6 +422,25 @@ export function buildDay(i: PlanInputs): DayPlan {
   if (!i.kneeDone && !settled.hasKind('knee')) {
     anchor(toMin('20:30'), 10, 10, 5 * 60, 'knee', 'Knee 10',
       'Ten minutes, every day, for the rest of the build. It is the cheapest thing on this page and the one that protects everything else.');
+  }
+
+  /* --------------------------------------- the spa, on the days it belongs */
+
+  // Placed here rather than left to the free-time layer because WHEN it happens
+  // is the entire point: cold within six hours of lifting costs you the session.
+  for (const raw of SPA_WEEK) {
+    if (raw.weekday !== weekday) continue;
+    if (settled.hasKind('recovery')) break;
+    const slot = withinHours(raw, gymOpen, gymClose);
+    if (!slot) continue;
+    const want = toMin(slot.at);
+    const free = subtract(gymWindow, placed, 15);
+    const near = free.filter((f) => f.end > want - 120 && f.start < want + 120);
+    const spot = findSpan(near, slot.minutes, want) ?? findSpan(near, 15, want);
+    if (!spot) continue;
+    const use = Math.min(slot.minutes, length(spot));
+    const start = Math.max(spot.start, Math.min(want, spot.end - use));
+    placed.push(block(start, start + use, 'recovery', slot.title, { why: slot.why }));
   }
 
   /* ------------------------------------------------- layer 2: the work */

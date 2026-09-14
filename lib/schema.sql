@@ -489,3 +489,8 @@ join (values
   ('legpress-150', '150 kg', 150, 4)
 ) as m (slug, label, value, sort) on m.slug = g.slug
 where not exists (select 1 from goal_milestones where goal_id = g.id);
+
+-- --------------------------------------------------- gym opening hours
+-- The planner will not place a session or a spa block outside these.
+alter table settings add column if not exists gym_open  text not null default '06:00';
+alter table settings add column if not exists gym_close text not null default '22:00';

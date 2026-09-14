@@ -11,6 +11,11 @@ import { Ring, Bar } from './_components/Ring';
 
 export const dynamic = 'force-dynamic';
 
+const FACILITY_NAME: Record<string, string> = {
+  sauna: 'Sauna', steam: 'Steam room', plunge: 'Cold plunge', coldroom: 'Cold room',
+  fireroom: 'Fire room', hottub: 'Hot tub', pool: 'Pool',
+};
+
 const GREETING: Record<string, string> = {
   morning: 'Good morning',
   afternoon: 'Good afternoon',
@@ -137,6 +142,28 @@ export default async function Today({
         </div>
       )}
 
+      {/* ------------------------------------------------------- recovery */}
+      {(readiness?.band !== 'green' || morning || t.plan.blocks.some((b) => b.kind === 'recovery')) && (
+        <div className="card">
+          <div className="lab">Spa and recovery</div>
+          <h2 style={{ fontSize: 19, margin: '6px 0 8px' }}>{t.recovery.headline}</h2>
+          <ol className="small" style={{ margin: '0 0 12px', paddingLeft: 18 }}>
+            {t.recovery.steps.map((x, i) => (
+              <li key={i} style={{ marginBottom: 4 }}>
+                <b>{FACILITY_NAME[x.facility]}</b> — {x.dose}
+              </li>
+            ))}
+          </ol>
+          <p className="small muted" style={{ marginBottom: t.recovery.avoid ? 12 : 0 }}>{t.recovery.why}</p>
+          {t.recovery.avoid && (
+            <div className="note warn" style={{ marginBottom: t.recovery.instead ? 10 : 0 }}>
+              <b>Not today.</b> {t.recovery.avoid}
+            </div>
+          )}
+          {t.recovery.instead && <p className="xs" style={{ marginBottom: 0 }}>{t.recovery.instead}</p>}
+        </div>
+      )}
+
       {/* ---------------------------------------------------- the priority */}
       {t.priority && !evening && (
         <div className="card">
@@ -176,6 +203,11 @@ export default async function Today({
                 <span className="body">
                   <b>{b.title}</b>
                   {b.why && b.kind !== 'free' && <span className="d">{b.why}</span>}
+                  {b.kind === 'train' && (
+                    <Link href="/gym/log" className="btn sm" style={{ marginTop: 8, display: 'inline-flex' }}>
+                      Log this session
+                    </Link>
+                  )}
                   {b.kind === 'free' && <span className="d">{hm(b.end - b.start)} — yours</span>}
                   {stored && b.kind !== 'free' && b.kind !== 'sleep' && (
                     <span className="blk-acts">

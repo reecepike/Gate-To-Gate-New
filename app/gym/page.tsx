@@ -5,6 +5,7 @@ import { context } from '@/lib/coach';
 import { toIso, fmt, BLOCKS } from '@/lib/plan';
 import { DAYS, VOLUME, LEFT_FIRST_RULE, daysInBlock } from '@/lib/gym';
 import { rungFor } from '@/lib/knee';
+import Link from 'next/link';
 import Nav from '../_components/Nav';
 import Mast from '../_components/Mast';
 
@@ -24,6 +25,10 @@ export default async function GymPage() {
   return (
     <div className="wrap">
       <Mast ctx={ctx} title="Gym" />
+
+      <Link href="/gym/log" className="btn wide" style={{ marginBottom: 14 }}>
+        Log today&rsquo;s session
+      </Link>
 
       <div className="note">
         <b>The rule that outranks everything else here.</b> {LEFT_FIRST_RULE}

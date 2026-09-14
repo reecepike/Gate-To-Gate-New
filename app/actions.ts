@@ -879,3 +879,56 @@ async function bumpGoal(slug: string, value: number): Promise<void> {
     values (${g.id}, ${today()}, ${value})
     on conflict (goal_id, day) do update set value = excluded.value`;
 }
+
+/**
+ * Log a whole gym session in one submission.
+ *
+ * The old flow was: fill in the session form, save, then fill in a separate
+ * lift form and TYPE THE EXERCISE NAME from memory, eight times, standing in a
+ * gym on a phone. The app already knows exactly which exercises today contains.
+ * It should hand you the list and take one save, and now it does.
+ *
+ * Blank rows are skipped rather than stored as zeroes, so doing five of the
+ * seven exercises records five lifts and not five lifts and two lies.
+ */
+export async function logGymSessionAction(fd: FormData) {
+  await requireUser();
+  const day = str(fd, 'day') ?? today();
+  const gymDay = str(fd, 'gym_day');
+  const title = str(fd, 'title');
+
+  const rows = await sql<{ id: number }[]>`
+    insert into sessions (day, kind, gym_day, title, duration_min, rpe, notes, completed)
+    values (${day}, 'gym', ${gymDay}, ${title}, ${int(fd, 'duration_min')},
+            ${int(fd, 'rpe')}, ${str(fd, 'notes')}, ${!bool(fd, 'abandoned')})
+    returning id`;
+  void rows;
+
+  // The form numbers each exercise row, so the names never have to be typed.
+  const count = int(fd, 'n') ?? 0;
+  let logged = 0;
+  for (let i = 0; i < count; i++) {
+    const name = str(fd, `ex${i}`);
+    const load = num(fd, `load${i}`);
+    const reps = int(fd, `reps${i}`);
+    const sets = int(fd, `sets${i}`);
+    if (!name) continue;
+    if (load === null && reps === null) continue;    // untouched row — not a zero
+    await sql`
+      insert into lifts (day, exercise, load_kg, reps, sets, side, note)
+      values (${day}, ${name}, ${load}, ${reps}, ${sets},
+              ${str(fd, `side${i}`) ?? 'both'}, ${str(fd, `note${i}`)})`;
+    logged++;
+  }
+
+  // Ticking the training block off keeps the timetable and the score honest.
+  await sql`
+    update plan_blocks set status = 'done'
+    where day = ${day} and kind = 'train' and status = 'planned'`;
+
+  revalidatePath('/');
+  revalidatePath('/gym');
+  revalidatePath('/log');
+  revalidatePath('/progress');
+  redirect(`/gym?logged=${logged}`);
+}
