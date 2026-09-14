@@ -260,8 +260,31 @@ export function buildDay(i: PlanInputs): DayPlan {
 
   const placed: Block[] = [];
 
-  // Anything the athlete locked, moved or created by hand wins over everything.
+  // Anything the athlete locked, moved, finished or skipped wins over everything.
   for (const k of i.keep) placed.push({ ...k, locked: true });
+
+  /**
+   * What the kept blocks already account for.
+   *
+   * This is the part that was missing, and it was the whole of the "it just
+   * adds it again" bug. A kept block used to occupy time without SATISFYING
+   * anything: you marked the morning's RPM done, the planner still believed it
+   * owed seven hours of RPM, and it dutifully found somewhere else in the day
+   * to put them. From the outside that looks exactly like the button not
+   * working.
+   *
+   * Done and skipped both count as settled for today. They mean different
+   * things tomorrow — a skipped job still owes its time, and the deadline
+   * arithmetic rolls it forward on its own — but neither should be put back on
+   * today's page after you have just dealt with it.
+   */
+  const settled = {
+    minutesFor: (pred: (b: Block) => boolean) =>
+      placed.filter(pred).reduce((a, b) => a + (b.end - b.start), 0),
+    hasKind: (k: BlockKind) => placed.some((b) => b.kind === k),
+    hasTitle: (t: string) => placed.some((b) => b.title === t),
+    forJob: (id: number) => placed.filter((b) => b.jobId === id).reduce((a, b) => a + (b.end - b.start), 0),
+  };
 
   for (const e of i.events) {
     if (!e.fixed) continue;
@@ -330,6 +353,7 @@ export function buildDay(i: PlanInputs): DayPlan {
     want: number, len: number, minLen: number, tolerance: number,
     kind: BlockKind, title: string, why: string | null,
   ) => {
+    if (settled.hasTitle(title)) return;
     const free = subtract(dayWindow, placed, Math.min(15, minLen));
     const near = free.filter((f) => f.end > want - tolerance && f.start < want + tolerance);
     const spot = findSpan(near, len, want) ?? findSpan(near, minLen, want);
@@ -353,7 +377,10 @@ export function buildDay(i: PlanInputs): DayPlan {
   let trainMinutes = 0;
   const band = i.readiness?.band ?? null;
 
-  if (i.training && band !== 'red') {
+  const trainingSettled = settled.hasKind('train') || settled.hasKind('recovery');
+  if (trainingSettled) {
+    trainMinutes = settled.minutesFor((b) => b.kind === 'train');
+  } else if (i.training && band !== 'red') {
     const free = subtract(dayWindow, placed, 20);
     // Afternoon by preference — far enough from breakfast to have digested,
     // early enough that it is not competing with the evening.
@@ -371,7 +398,7 @@ export function buildDay(i: PlanInputs): DayPlan {
     } else {
       notes.push(`${i.training.title} could not be placed — the fixed commitments fill the day. Move something or accept it slides.`);
     }
-  } else if (i.training && band === 'red') {
+  } else if (i.training && band === 'red' && !trainingSettled) {
     const free = subtract(dayWindow, placed, 20);
     const spot = findSpan(free, 40, toMin('18:00'));
     if (spot) {
@@ -382,7 +409,7 @@ export function buildDay(i: PlanInputs): DayPlan {
     notes.push('Training is deliberately not on today. That is the plan working, not the plan failing.');
   }
 
-  if (!i.kneeDone) {
+  if (!i.kneeDone && !settled.hasKind('knee')) {
     anchor(toMin('20:30'), 10, 10, 5 * 60, 'knee', 'Knee 10',
       'Ten minutes, every day, for the rest of the build. It is the cheapest thing on this page and the one that protects everything else.');
   }
@@ -410,21 +437,31 @@ export function buildDay(i: PlanInputs): DayPlan {
   }
 
   const workQueue: { minutes: number; title: string; kind: BlockKind; job?: Job; why: string }[] = [];
-  if (rpmMinutes > 0) {
+
+  // Whatever is already on the page — done, skipped or locked — comes off what
+  // is still owed. Without this, ticking a block off simply moved it.
+  const rpmSettled = settled.minutesFor((b) => b.kind === 'work' && b.title === 'RPM');
+  const rpmLeft = Math.max(0, rpmMinutes - rpmSettled);
+  if (rpmLeft >= WORK_MIN_CHUNK) {
     workQueue.push({
-      minutes: rpmMinutes,
+      minutes: rpmLeft,
       title: 'RPM',
       kind: 'work',
-      why: `${hm(rpmMinutes)} is the day's RPM budget. You set your own hours, so the planner places it where the day allows rather than assuming a fixed nine-to-five.`,
+      why: rpmSettled > 0
+        ? `${hm(rpmSettled)} of the ${hm(rpmMinutes)} RPM budget is already accounted for. This is the rest of it.`
+        : `${hm(rpmMinutes)} is the day's RPM budget. You set your own hours, so the planner places it where the day allows rather than assuming a fixed nine-to-five.`,
     });
   }
   for (const d of ownDemands) {
+    const already = settled.forJob(d.job.id);
+    const left = Math.max(0, d.today - already);
+    if (left < WORK_MIN_CHUNK) continue;
     workQueue.push({
-      minutes: d.today,
+      minutes: left,
       title: d.job.client ? `${d.job.title} — ${d.job.client}` : d.job.title,
-      kind: d.job.area === 'work' ? 'own' : 'own',
+      kind: 'own',
       job: d.job,
-      why: d.reason,
+      why: already > 0 ? `${hm(already)} already down today. ${d.reason}` : d.reason,
     });
   }
 
@@ -467,6 +504,26 @@ export function buildDay(i: PlanInputs): DayPlan {
       } else {
         notes.push(`${hm(left)} of the RPM budget would not fit around today's commitments. That is worth knowing now rather than at six o'clock.`);
       }
+    }
+  }
+
+  // Say out loud what a skip did. "It rescheduled" is invisible otherwise —
+  // the work simply reappears tomorrow with no explanation, which reads like
+  // the app forgot rather than like it handled it.
+  const skipped = placed.filter((b) => b.status === 'skipped');
+  for (const sk of skipped) {
+    const job = sk.jobId ? i.jobs.find((j) => j.id === sk.jobId) : null;
+    if (job?.due) {
+      const left = daysBetween(i.day, job.due);
+      notes.push(
+        left > 0
+          ? `${job.title} skipped today. The ${hm(Math.max(0, job.est_min - job.logged_min))} still to do now spreads over ${left} day${left === 1 ? '' : 's'} instead of ${left + 1}, so tomorrow's share goes up — nothing has been lost, and the deadline has not moved.`
+          : `${job.title} skipped, and it is due today. That is now overdue, and tomorrow it will be at the top of the list whatever else is on.`,
+      );
+    } else if (sk.title === 'RPM') {
+      notes.push(
+        `${hm(sk.end - sk.start)} of RPM skipped. The budget resets tomorrow rather than carrying a debt — but two or three of these in a week is the thing to notice, not any one of them.`,
+      );
     }
   }
 

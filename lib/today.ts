@@ -15,9 +15,9 @@
 import 'server-only';
 import {
   getSettings, getReadiness, recentReadiness, recentKnee, getKnee,
-  allJobs, eventsOn, getCommitments, blocksOn, saveDay, allGoals, allMilestones,
-  balanceSignal, recentScores, saveScore, sessionsBetween, workLogBetween,
-  type StoredBlock,
+  allJobs, eventsOn, getCommitments, blocksOn, saveDay, daySignature, allGoals,
+  allMilestones, balanceSignal, recentScores, saveScore, sessionsBetween,
+  workLogBetween, type StoredBlock,
 } from './db';
 import { toIso, addDays } from './plan';
 import { context, type Context } from './coach';
@@ -67,10 +67,12 @@ export async function loadToday(dayIso?: string): Promise<Today> {
   const [
     settings, readinessRow, history, kneeLogs, kneeToday, jobs,
     events, commitments, existing, goals, milestones, balance, scores,
+    sessions, workLog,
   ] = await Promise.all([
     getSettings(), getReadiness(day), recentReadiness(day, 30), recentKnee(day, 40),
     getKnee(day), allJobs(), eventsOn(day), getCommitments(), blocksOn(day),
     allGoals(), allMilestones(), balanceSignal(day), recentScores(day, 14),
+    sessionsBetween(day, day), workLogBetween(day, day),
   ]);
 
   const ctx = context(day);
@@ -119,18 +121,16 @@ export async function loadToday(dayIso?: string): Promise<Today> {
     goals: goals.map((g) => ({ id: g.id, title: g.title, area: g.area, status: g.status })),
   });
 
-  // Persist so the calendar, the score and tomorrow's balance signal all read
-  // the same day. Cheap, and it makes the plan a record rather than a guess
-  // that is regenerated slightly differently on every refresh.
-  await saveDay(day, plan.blocks);
-  const blocks = await blocksOn(day);
+  // Persist only when the generated plan has actually changed. Opening Today
+  // twice used to do around twenty writes for no reason; now it does none.
+  let blocks = existing;
+  if (daySignature(plan.blocks) !== daySignature(existing)) {
+    await saveDay(day, plan.blocks);
+    blocks = await blocksOn(day);
+  }
 
   /* -------------------------------------------------------- the score */
 
-  const [sessions, workLog] = await Promise.all([
-    sessionsBetween(day, day),
-    workLogBetween(day, day),
-  ]);
   const trainedMin = sessions.filter((s) => s.completed).reduce((a, s) => a + (s.duration_min ?? 0), 0);
   const workedMin = workLog.reduce((a, w) => a + w.minutes, 0);
   const touched = goalsTouchedBy(
@@ -154,7 +154,7 @@ export async function loadToday(dayIso?: string): Promise<Today> {
     dayOver: !isToday || now >= toMin(settings.bed_time),
   });
 
-  if (score.score !== null) {
+  if (score.score !== null && scores.find((x) => x.day === day)?.score !== score.score) {
     await saveScore(day, score.score, score.band, { parts: score.parts }, score.confidence, score.headline);
   }
 

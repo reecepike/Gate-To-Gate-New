@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { LinkSpinner } from './Submit';
 
 /**
  * Five destinations, and no more. The complexity of this app lives under the
@@ -65,6 +66,7 @@ export default function Nav({ active }: { active: string }) {
     <nav className="tabs">
       {TABS.map((t) => (
         <Link key={t.href} href={t.href} className={t.href === on ? 'on' : ''}>
+          <LinkSpinner />
           <span className="ic">{ICONS[t.icon]}</span>
           {t.label}
         </Link>

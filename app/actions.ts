@@ -438,12 +438,58 @@ export async function saveCheckInAction(fd: FormData) {
 
 /* ------------------------------------------------------------ the plan */
 
+/**
+ * Tick a block off, skip it, or put it back.
+ *
+ * Marking a work block done credits the time to the job, which is the whole
+ * point — otherwise you tick off three hours of a build and the job still shows
+ * four hours remaining tomorrow, and the planner keeps demanding it.
+ *
+ * Skipping deliberately does NOT credit anything. The work still has to happen,
+ * and the deadline arithmetic will hand it to tomorrow on its own: the same
+ * hours across one fewer day means tomorrow's share goes up. That is the
+ * rescheduling, and it needs no special case.
+ */
 export async function setBlockStatusAction(fd: FormData) {
   await requireUser();
   const id = int(fd, 'id');
   const status = str(fd, 'status') ?? 'planned';
-  if (id) await sql`update plan_blocks set status = ${status} where id = ${id}`;
+  if (!id) { revalidatePath('/'); return; }
+
+  const rows = await sql<{
+    job_id: number | null; status: string; day: string; start_at: string; end_at: string; title: string;
+  }[]>`select job_id, status, day, start_at, end_at, title from plan_blocks where id = ${id}`;
+  const b = rows[0];
+  if (!b) { revalidatePath('/'); return; }
+
+  const mins = (t: string) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(t ?? '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+  };
+  const minutes = Math.max(0, mins(b.end_at) - mins(b.start_at));
+
+  await sql`update plan_blocks set status = ${status} where id = ${id}`;
+
+  if (b.job_id && minutes > 0) {
+    const wasDone = b.status === 'done';
+    const nowDone = status === 'done';
+    if (nowDone && !wasDone) {
+      await sql`update jobs set logged_min = logged_min + ${minutes}, last_touched = current_date,
+                status = case when status = 'todo' then 'doing' else status end
+                where id = ${b.job_id}`;
+      await sql`insert into work_log (day, job_id, minutes, note)
+                values (${b.day}, ${b.job_id}, ${minutes}, ${b.title})`;
+    } else if (wasDone && !nowDone) {
+      // Undo has to give the time back, or a mis-tap permanently inflates the job.
+      await sql`update jobs set logged_min = greatest(0, logged_min - ${minutes}) where id = ${b.job_id}`;
+      await sql`delete from work_log where id = (
+        select id from work_log where job_id = ${b.job_id} and day = ${b.day} and minutes = ${minutes}
+        order by id desc limit 1)`;
+    }
+  }
+
   revalidatePath('/');
+  revalidatePath('/work');
 }
 
 export async function lockBlockAction(fd: FormData) {

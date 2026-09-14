@@ -6,6 +6,7 @@ import { fmtLong } from '@/lib/plan';
 import { toHHMM, hmShort, hm } from '@/lib/clock';
 import { setBlockStatusAction, lockBlockAction, replanAction } from './actions';
 import Nav from './_components/Nav';
+import { Submit } from './_components/Submit';
 import { Ring, Bar } from './_components/Ring';
 
 export const dynamic = 'force-dynamic';
@@ -162,7 +163,13 @@ export default async function Today({
             return (
               <div
                 key={`${b.start}-${b.title}-${i}`}
-                className={`tl-row ${isNow ? 'now' : ''} ${b.kind === 'free' ? 'is-free' : ''} ${b.status === 'done' ? 'is-done' : ''}`}
+                className={[
+                  'tl-row',
+                  isNow ? 'now' : '',
+                  b.kind === 'free' ? 'is-free' : '',
+                  b.status === 'done' ? 'is-done' : '',
+                  b.status === 'skipped' ? 'is-skipped' : '',
+                ].filter(Boolean).join(' ')}
               >
                 <span className="t">{toHHMM(b.start)}</span>
                 <span className={`bar k-${b.kind}`} />
@@ -171,28 +178,34 @@ export default async function Today({
                   {b.why && b.kind !== 'free' && <span className="d">{b.why}</span>}
                   {b.kind === 'free' && <span className="d">{hm(b.end - b.start)} — yours</span>}
                   {stored && b.kind !== 'free' && b.kind !== 'sleep' && (
-                    <span style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    <span className="blk-acts">
                       <form action={setBlockStatusAction}>
                         <input type="hidden" name="id" value={stored.id} />
                         <input type="hidden" name="day" value={t.day} />
                         <input type="hidden" name="status" value={b.status === 'done' ? 'planned' : 'done'} />
-                        <button className="ghost sm" type="submit">
-                          {b.status === 'done' ? 'Undo' : 'Done'}
-                        </button>
+                        <Submit className={b.status === 'done' ? 'on' : ''} busyLabel="…">
+                          {b.status === 'done' ? '✓ Done' : 'Done'}
+                        </Submit>
                       </form>
                       <form action={setBlockStatusAction}>
                         <input type="hidden" name="id" value={stored.id} />
                         <input type="hidden" name="day" value={t.day} />
-                        <input type="hidden" name="status" value="skipped" />
-                        <button className="ghost sm" type="submit">Skip</button>
+                        <input type="hidden" name="status" value={b.status === 'skipped' ? 'planned' : 'skipped'} />
+                        <Submit busyLabel="…">
+                          {b.status === 'skipped' ? 'Put back' : 'Skip'}
+                        </Submit>
                       </form>
                       <form action={lockBlockAction}>
                         <input type="hidden" name="id" value={stored.id} />
                         <input type="hidden" name="day" value={t.day} />
                         <input type="hidden" name="locked" value={stored.locked ? '0' : '1'} />
-                        <button className="ghost sm" type="submit" title="A locked block is never moved by replanning">
-                          {stored.locked ? 'Unlock' : 'Lock'}
-                        </button>
+                        <Submit
+                          className={stored.locked ? 'lock-on' : ''}
+                          busyLabel="…"
+                          title="A locked block is never moved when the day is replanned"
+                        >
+                          {stored.locked ? 'Locked' : 'Lock'}
+                        </Submit>
                       </form>
                     </span>
                   )}
@@ -205,7 +218,9 @@ export default async function Today({
 
       <form action={replanAction} style={{ marginBottom: 14 }}>
         <input type="hidden" name="day" value={t.day} />
-        <button className="ghost wide" type="submit">Replan the rest of the day</button>
+        <Submit className="ghost wide" busyLabel="Rebuilding the day…">
+          Replan the rest of the day
+        </Submit>
       </form>
 
       {plan.notes.map((nte, i) => (

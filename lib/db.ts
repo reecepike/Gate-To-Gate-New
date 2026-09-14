@@ -392,20 +392,55 @@ export async function blocksOn(day: string): Promise<StoredBlock[]> {
  * automatic replanning, and breaking it once would end trust in it.
  */
 export async function saveDay(day: string, blocks: Block[]): Promise<void> {
+  const rows = blocks
+    .filter((b) => !b.locked)
+    .map((b) => ({
+      day,
+      start_at: toClock(b.start),
+      end_at: toClock(b.end),
+      kind: b.kind,
+      title: b.title,
+      detail: b.detail,
+      why: b.why,
+      job_id: b.jobId,
+      event_id: b.eventId,
+      goal_id: b.goalId,
+      locked: b.locked,
+      status: b.status,
+      generated: b.generated,
+    }));
+
   await sql`
     delete from plan_blocks
     where day = ${day} and locked = false and status = 'planned' and generated = true`;
-  for (const b of blocks) {
-    if (b.locked) continue;
-    await sql`
-      insert into plan_blocks
-        (day, start_at, end_at, kind, title, detail, why, job_id, event_id, goal_id, locked, status, generated)
-      values
-        (${day}, ${toClock(b.start)}, ${toClock(b.end)}, ${b.kind}, ${b.title},
-         ${b.detail}, ${b.why}, ${b.jobId}, ${b.eventId}, ${b.goalId},
-         ${b.locked}, ${b.status}, ${b.generated})
-      on conflict (day, start_at, title) do nothing`;
-  }
+
+  if (!rows.length) return;
+
+  // One statement, not one per block. Fifteen sequential round trips to a
+  // database in another datacentre is most of a second of pure latency, and it
+  // was happening on every single page load.
+  await sql`
+    insert into plan_blocks ${sql(
+      rows,
+      'day', 'start_at', 'end_at', 'kind', 'title', 'detail', 'why',
+      'job_id', 'event_id', 'goal_id', 'locked', 'status', 'generated',
+    )}
+    on conflict (day, start_at, title) do nothing`;
+}
+
+/**
+ * A cheap fingerprint of the generated part of a day.
+ *
+ * Rendering a page should not write to the database. Comparing this against
+ * what is already stored means the common case — opening Today twice — does no
+ * writes at all, and the plan is only persisted when it has actually changed.
+ */
+export function daySignature(blocks: { start: number; end: number; kind: string; title: string; locked: boolean; status: string; generated: boolean }[]): string {
+  return blocks
+    .filter((b) => !b.locked && b.status === 'planned' && b.generated)
+    .map((b) => `${b.start}-${b.end}-${b.kind}-${b.title}`)
+    .sort()
+    .join('|');
 }
 
 /* ------------------------------------------------------------- goals */

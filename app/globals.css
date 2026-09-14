@@ -483,3 +483,78 @@ input[type=checkbox] { accent-color: var(--accent); width: 20px; height: 20px; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ===================================================================
+ *  Feedback.
+ *
+ *  A tap that produces nothing visible reads as a broken button, and
+ *  the reflex is to tap it again — which on a timetable means ticking
+ *  something off twice. Every interactive thing here acknowledges the
+ *  press on the press, before the server has said anything.
+ * =================================================================== */
+
+button, .btn, .tabs a, .subtabs a, .tl-row, .sesh {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, .btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  transition: transform .09s cubic-bezier(.2,.8,.2,1), opacity .12s ease, background .12s ease;
+  touch-action: manipulation;
+}
+button:active:not(:disabled), .btn:active { transform: scale(.94); }
+button.ghost:active:not(:disabled) { background: var(--rule); }
+
+/* The pressed state has to survive the round trip, so it is not just :active. */
+button.busy, button[aria-busy='true'] {
+  opacity: 1;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  cursor: progress;
+}
+button.ghost.busy { background: var(--accent-soft); color: var(--accent-ink); }
+
+.spin {
+  width: 13px; height: 13px; flex: 0 0 auto;
+  border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 999px; animation: spin .62s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Navigation: a thin bar across the top while the next page is fetched. */
+.route-bar {
+  position: fixed; inset: 0 0 auto 0; height: 3px; z-index: 60;
+  background: var(--accent);
+  transform-origin: left;
+  animation: route 1.1s cubic-bezier(.2,.8,.2,1) infinite;
+}
+@keyframes route {
+  0%   { transform: scaleX(0); opacity: 1; }
+  60%  { transform: scaleX(.75); opacity: 1; }
+  100% { transform: scaleX(1); opacity: .25; }
+}
+
+/* Tapping a nav tab should feel like something before the page arrives. */
+.tabs a:active { background: var(--sunk); }
+.subtabs a:active { transform: scale(.96); }
+
+/* A row you have just acted on gets a moment of acknowledgement. */
+.tl-row { transition: background .18s ease, opacity .18s ease; }
+.tl-row.is-done { background: var(--go-soft); }
+.tl-row.is-skipped { opacity: .45; }
+.tl-row.is-skipped b { text-decoration: line-through; color: var(--muted); }
+
+/* The block action row: small, thumb-sized, and clearly tappable. */
+.blk-acts { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+.blk-acts button {
+  font-size: 12.5px; padding: 7px 13px; min-height: 34px;
+  background: var(--sunk); color: var(--ink-2); font-weight: 600;
+}
+.blk-acts button.on { background: var(--go); color: #fff; }
+.blk-acts button.lock-on { background: var(--ink); color: var(--ground); }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin, .route-bar { animation: none; }
+  .route-bar { transform: scaleX(1); }
+}
