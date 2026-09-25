@@ -17,13 +17,13 @@ import {
   getSettings, getReadiness, recentReadiness, recentKnee, getKnee,
   allJobs, eventsOn, getCommitments, blocksOn, saveDay, daySignature, allGoals,
   allMilestones, balanceSignal, recentScores, saveScore, sessionsBetween,
-  workLogBetween, type StoredBlock,
+  workLogBetween, recentSessions, eventsBetween, type StoredBlock,
 } from './db';
 import { toIso, addDays } from './plan';
 import { context, type Context } from './coach';
 import { assess, sleepHoursFrom, type Verdict } from './readiness';
 import { kneeVerdict, rungFor, type KneeVerdict, type RungVerdict } from './knee';
-import { prescribe } from './gym';
+import { prescribe, nextGymSession, type GymPick } from './gym';
 import { buildDay, nowCard, type DayPlan, type NowCard, type Block } from './planner';
 import { scoreDay, trend, type DayScore } from './score';
 import { progressOf, goalsTouchedBy, type Goal, type GoalProgress } from './goals';
@@ -53,6 +53,8 @@ export type Today = {
   priority: { title: string; detail: string; kind: string } | null;
   /** What to do with the spa today — and what not to. */
   recovery: Recommendation;
+  /** Which gym session is due, and why that one. */
+  gym: GymPick;
 };
 
 function partOf(now: number): Today['partOfDay'] {
@@ -70,12 +72,13 @@ export async function loadToday(dayIso?: string): Promise<Today> {
   const [
     settings, readinessRow, history, kneeLogs, kneeToday, jobs,
     events, commitments, existing, goals, milestones, balance, scores,
-    sessions, workLog,
+    sessions, workLog, gymHistory, aroundEvents,
   ] = await Promise.all([
     getSettings(), getReadiness(day), recentReadiness(day, 30), recentKnee(day, 40),
     getKnee(day), allJobs(), eventsOn(day), getCommitments(), blocksOn(day),
     allGoals(), allMilestones(), balanceSignal(day), recentScores(day, 14),
     sessionsBetween(day, day), workLogBetween(day, day),
+    recentSessions(40), eventsBetween(day, addDays(day, 1)),
   ]);
 
   const ctx = context(day);
@@ -88,7 +91,26 @@ export async function loadToday(dayIso?: string): Promise<Today> {
   // being asked again at four o'clock is not.
   const needsCheckIn = isToday && !readinessRow?.checked_in_at;
 
-  const gym = ctx.gym ? prescribe(day, ctx.gym, rung.rung, rung.suspended) : null;
+  /* The gym is a queue now, not a weekday map. What is due is whatever has
+     not been completed yet — so skipping a session rolls it to tomorrow
+     rather than losing it for the week. */
+  const tomorrow = addDays(day, 1);
+  const pick: GymPick = nextGymSession(
+    day,
+    gymHistory.filter((x) => x.kind === 'gym').map((x) => ({
+      day: x.day, gym_day: x.gym_day, completed: x.completed,
+    })),
+    {
+      gatesTomorrow: commitments.some((c) => c.kind === 'ski' && c.weekday === ((new Date(tomorrow + 'T12:00:00Z').getUTCDay() + 6) % 7) + 1)
+        || aroundEvents.some((e) => e.day === tomorrow && (e.kind === 'ski' || e.kind === 'race')),
+      raceToday: aroundEvents.some((e) => e.day === day && e.kind === 'race'),
+      raceTomorrow: aroundEvents.some((e) => e.day === tomorrow && e.kind === 'race'),
+      restToday: commitments.some((c) => c.kind === 'ski' && c.weekday === ((new Date(day + 'T12:00:00Z').getUTCDay() + 6) % 7) + 1)
+        || events.some((e) => e.kind === 'ski' && e.fixed),
+    },
+  );
+
+  const gym = pick.day ? prescribe(day, pick.day, rung.rung, rung.suspended) : null;
   const training = gym
     ? {
       title: gym.replaces ? gym.replaces.title : `${gym.day.title}`,
@@ -108,7 +130,7 @@ export async function loadToday(dayIso?: string): Promise<Today> {
     settings: {
       wake: settings.wake_time,
       bed: settings.bed_time,
-      rpmDailyH: settings.rpm_daily_h,
+      workDailyH: settings.rpm_daily_h,
       workCapH: settings.work_cap_h,
       freeFloorMin: settings.free_floor_min,
       gymOpen: settings.gym_open,
@@ -202,6 +224,7 @@ export async function loadToday(dayIso?: string): Promise<Today> {
     goals: goalViews,
     priority,
     recovery,
+    gym: pick,
   };
 }
 

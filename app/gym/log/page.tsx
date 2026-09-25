@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { currentUser } from '@/lib/auth';
 import { recentKnee, recentLifts } from '@/lib/db';
-import { context } from '@/lib/coach';
+import { loadToday } from '@/lib/today';
 import { toIso, fmtLong } from '@/lib/plan';
 import { DAYS, prescribe, LEFT_FIRST_RULE, PROGRESSION_RULE } from '@/lib/gym';
 import { rungFor } from '@/lib/knee';
@@ -30,13 +30,14 @@ export default async function LogGym({
   const params = await searchParams;
   const day = params.day ?? toIso(new Date());
 
-  const ctx = context(day);
-  const [kneeLogs, lifts] = await Promise.all([recentKnee(day, 40), recentLifts(200)]);
+  const [kneeLogs, lifts, t] = await Promise.all([
+    recentKnee(day, 40), recentLifts(200), loadToday(day),
+  ]);
   const rung = rungFor(day, kneeLogs);
 
-  // Whatever is scheduled today, or whichever day was asked for explicitly.
-  const chosen = params.d ? DAYS.find((x) => x.key === params.d) : ctx.gym;
-  const gymDay = chosen ?? ctx.gym;
+  // Whatever the rotation says is due, unless a session was asked for by name.
+  const chosen = params.d ? DAYS.find((x) => x.key === params.d) : t.gym.day;
+  const gymDay = chosen ?? t.gym.day;
 
   if (!gymDay) {
     return (
@@ -89,6 +90,12 @@ export default async function LogGym({
           </Link>
         ))}
       </div>
+
+      {!params.d && (
+        <div className="note neutral">
+          <b>{t.gym.doneThisWeek} of 5 done in the last seven days.</b> {t.gym.reason}
+        </div>
+      )}
 
       <div className="note">
         <b>{LEFT_FIRST_RULE}</b>

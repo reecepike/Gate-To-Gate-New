@@ -75,8 +75,9 @@ export default async function More({
           <input type="number" step="any" name="rpm_daily_h" inputMode="decimal" defaultValue={s.rpm_daily_h} />
         </label>
         <p className="xs" style={{ marginTop: -8, marginBottom: 14 }}>
-          A budget, not a block. The planner finds {hm(s.rpm_daily_h * 60)} somewhere in the day
-          and works around whatever else is fixed.
+          A target, not a block to be filled. The day is built from real jobs with real
+          deadlines; if they do not add up to {hm(s.rpm_daily_h * 60)}, the gap is offered to one or
+          two proactive things rather than padded out with a nameless work block.
         </p>
 
         <label className="f">

@@ -142,6 +142,32 @@ export default async function Today({
         </div>
       )}
 
+      {/* ----------------------------------------------------- the gym queue */}
+      {(t.gym.day || t.gym.reason) && (
+        <div className="card">
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <div className="lab">Gym</div>
+            <span className="xs" style={{ marginLeft: 'auto' }}>{t.gym.doneThisWeek} of 5 in seven days</span>
+          </div>
+          <h2 style={{ fontSize: 19, margin: '6px 0 6px' }}>
+            {t.gym.day ? t.gym.day.title : 'No session today'}
+            {t.gym.rolledOver && <span className="chip amber" style={{ marginLeft: 8 }}>Rolled over</span>}
+          </h2>
+          <p className="small muted" style={{ marginBottom: t.gym.deferred.length ? 10 : 0 }}>{t.gym.reason}</p>
+          {t.gym.deferred.length > 0 && (
+            <div className="note neutral" style={{ marginBottom: 0 }}>
+              <b>Waiting for tomorrow.</b>{' '}
+              {t.gym.deferred.map((d) => `${d.title} — ${d.because}`).join('; ')}.
+            </div>
+          )}
+          {t.gym.day && (
+            <p style={{ margin: '12px 0 0' }}>
+              <Link href="/gym/log" className="btn ghost wide">Log this session</Link>
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ------------------------------------------------------- recovery */}
       {(readiness?.band !== 'green' || morning || t.plan.blocks.some((b) => b.kind === 'recovery')) && (
         <div className="card">

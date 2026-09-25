@@ -163,3 +163,70 @@ Per §40, and so you can tell me if you disagree:
   Next phase.
 - **Phase 5 polish** — animations, charts, skeleton loading states. The structure is
   there and the app is fast; this is the layer that makes it feel finished.
+
+---
+
+## Update — work without "RPM", and a gym rotation you filter through
+
+### 1. "RPM" is gone. There is just work.
+
+The old planner put a nameless **RPM** block on the day and sized it to fill your
+daily target. That is padding, and padding is what makes a plan something you ignore.
+
+Now the day is built from **real jobs with real deadlines** — the ones on `/work`,
+each given today's share of the work remaining before its due date, largest urgency
+first. Nothing generic gets scheduled.
+
+When those jobs do not add up to your target, the planner does **not** invent work.
+It says so, and offers at most **two proactive things** instead:
+
+| | | |
+|---|---|---|
+| Personal brand — one piece | 60 min | brand |
+| Prospecting — three real pitches | 45 min | business |
+| Lyne — MTB | 60 min | life |
+| Admin, invoices, receipts | 30 min | business |
+| Client follow-ups | 30 min | business |
+| Sharpen something | 45 min | business |
+
+They rotate by date, so it is not the same suggestion every quiet day, and each is
+linked to a goal so it is never busywork. Whatever you do not take **stays free** —
+the free-time floor is still protected and the planner still stops rather than fill it.
+
+The note on the day reads: *"Only 2 h 15 of work genuinely has to happen today against
+a 7 h target. The rest has not been padded out with a nameless block — it is offered
+to two proactive things, and whatever you do not take stays free."*
+
+The setting is still one number — now labelled **work hours a normal day** in More.
+
+### 2. Skip a gym session and it rolls to tomorrow
+
+The rotation is driven by **what you have completed**, not by what day it is:
+
+`Lower Strength → Push & Trunk → Lateral & Shoulders → Lower Power → Pull & Arms`
+
+The app looks at your last *logged* session and offers the next one in the ring. So
+skipping does not advance anything — the session you missed is simply the one that
+comes up next time, with a **Rolled over** chip and a line saying *"It has been
+waiting since you last lifted — nothing was lost, it just moved."* All five get done;
+you just filter through them.
+
+The Today card shows **"N of 5 in the last seven days"**, so you can see the week's
+volume at a glance without it becoming a calendar you have failed.
+
+### 3. Two things still outrank the queue
+
+Skiing wins. Both of these defer a session rather than cancelling it, and the card
+says which one and why:
+
+- **No lower-body session the day before gates.** Legs on Wednesday means a worse
+  Thursday night on snow.
+- **No lower-body session the day before a race**, and nothing at all on race day.
+
+So if Lower Strength is due but you have gates tomorrow, you get Push & Trunk today
+and Lower Strength moves forward intact.
+
+### Deploying
+
+**No migration.** This change reuses the existing `rpm_daily_h` column as the work
+target — nothing to run in Neon. Push and redeploy.

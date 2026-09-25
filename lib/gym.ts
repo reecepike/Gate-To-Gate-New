@@ -324,3 +324,133 @@ export function gymDayOn(iso: string): GymDay | null {
   const wd = dow(iso);
   return daysInBlock(b).find((d) => d.weekday === wd) ?? null;
 }
+
+/* ===================================================================
+ *  The rotation.
+ *
+ *  The five sessions used to be pinned to weekdays: Monday was always
+ *  Lower Strength, Saturday was always Pull. That is tidy on paper and
+ *  wrong in practice, because a missed Monday meant Lower Strength was
+ *  simply gone for the week — you did four sessions instead of five and
+ *  the one you skipped was always the same one.
+ *
+ *  So they are a queue now. You work through the five in order, and a
+ *  session you skip is the one waiting for you tomorrow. Nothing is
+ *  lost; it just moves.
+ *
+ *  Two constraints still outrank the queue, and both exist to protect
+ *  the skiing rather than the lifting:
+ *
+ *    - No lower-body session the day before gates. That rule is why
+ *      Push used to sit on a Tuesday, and it survives the change.
+ *    - No lower-body session the day before a race, for the same
+ *      reason at higher stakes.
+ *
+ *  When the next session in the queue is blocked by one of those, the
+ *  queue simply skips past it to the next one that is allowed, and the
+ *  blocked session stays at the front for the following day.
+ * =================================================================== */
+
+export const ROTATION: GymDay['key'][] = ['lowerA', 'push', 'cond', 'lowerB', 'pull'];
+
+/** Sessions that load the legs hard enough to matter the day before gates. */
+export function isLowerDay(key: GymDay['key']): boolean {
+  return key === 'lowerA' || key === 'lowerB';
+}
+
+export type GymHistoryRow = { day: string; gym_day: string | null; completed: boolean };
+
+export type GymPick = {
+  day: GymDay | null;
+  /** Why this one, or why none today. */
+  reason: string;
+  /** Completed sessions in the last seven days. */
+  doneThisWeek: number;
+  /** Sessions the queue stepped over today, and what blocked them. */
+  deferred: { title: string; because: string }[];
+  /** True when this session has been waiting because it was skipped. */
+  rolledOver: boolean;
+};
+
+export type GymConditions = {
+  /** Gates tomorrow — no leg load today. */
+  gatesTomorrow: boolean;
+  raceToday: boolean;
+  raceTomorrow: boolean;
+  /** A day with no gym in it at all — gates day, or a race. */
+  restToday: boolean;
+};
+
+/**
+ * The next session due, given what has actually been completed.
+ *
+ * Driven by completions rather than by the calendar, which is what makes a
+ * skip roll forward for free: skipping does not advance the queue, so
+ * tomorrow offers the same session again.
+ */
+export function nextGymSession(
+  iso: string,
+  history: GymHistoryRow[],
+  c: GymConditions,
+): GymPick {
+  const doneThisWeek = history.filter(
+    (h) => h.completed && h.gym_day && daysApart(h.day, iso) < 7 && h.day <= iso,
+  ).length;
+
+  const base = { doneThisWeek, deferred: [] as { title: string; because: string }[], rolledOver: false };
+
+  if (c.raceToday) {
+    return { ...base, day: null, reason: 'Racing today. The gym is not the point of this one.' };
+  }
+  if (c.restToday) {
+    return { ...base, day: null, reason: 'Gates today — that is the session everything else exists to support. No lifting.' };
+  }
+  if (doneThisWeek >= 5) {
+    return { ...base, day: null, reason: 'All five sessions done in the last seven days. This is a rest day and you earned it.' };
+  }
+
+  // Where the queue is: one past the most recently completed session.
+  const last = history
+    .filter((h) => h.completed && h.gym_day && h.day <= iso)
+    .sort((a, b) => b.day.localeCompare(a.day))[0];
+
+  const lastIdx = last?.gym_day ? ROTATION.indexOf(last.gym_day as GymDay['key']) : -1;
+  const rolledOver = !!last && daysApart(last.day, iso) > 1;
+
+  const deferred: { title: string; because: string }[] = [];
+
+  for (let step = 1; step <= ROTATION.length; step++) {
+    const key = ROTATION[(lastIdx + step + ROTATION.length) % ROTATION.length];
+    const day = DAYS.find((d) => d.key === key)!;
+
+    if (isLowerDay(key) && c.gatesTomorrow) {
+      deferred.push({ title: day.title, because: 'gates tomorrow — no leg load the day before' });
+      continue;
+    }
+    if (isLowerDay(key) && c.raceTomorrow) {
+      deferred.push({ title: day.title, because: 'racing tomorrow' });
+      continue;
+    }
+
+    const reason = deferred.length
+      ? `${deferred[0].title} is next in the queue but ${deferred[0].because}, so it waits for tomorrow and you do this instead.`
+      : rolledOver
+        ? `Next in the queue. It has been waiting since you last lifted — nothing was lost, it just moved.`
+        : `Next in the queue. ${doneThisWeek} of 5 done in the last seven days.`;
+
+    return { ...base, day, reason, deferred, rolledOver };
+  }
+
+  return {
+    ...base,
+    day: null,
+    deferred,
+    reason: 'Every session in the queue loads the legs and you have gates or a race tomorrow. Today is mobility and the spa.',
+  };
+}
+
+function daysApart(a: string, b: string): number {
+  return Math.abs(Math.round(
+    (new Date(b + 'T12:00:00Z').getTime() - new Date(a + 'T12:00:00Z').getTime()) / 86_400_000,
+  ));
+}

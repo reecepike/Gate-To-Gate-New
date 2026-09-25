@@ -86,8 +86,8 @@ export type Commitment = {
 export type PlanSettings = {
   wake: string;
   bed: string;
-  /** Hours of RPM a normal working day owes. A budget, not a fixed block. */
-  rpmDailyH: number;
+  /** Hours of work a normal day owes. A target, not a block to be filled. */
+  workDailyH: number;
   /** The point past which more work is a worse day, not a better one. */
   workCapH: number;
   /** Minutes of unstructured time the day must keep. */
@@ -223,6 +223,40 @@ export function requiredToday(jobs: Job[], day: string, capMinutes: number): Wor
 }
 
 /* -------------------------------------------------------------- the plan */
+
+/**
+ * What a light day gets offered instead of a nameless work block.
+ *
+ * Every one of these serves a long-term goal, takes under an hour, and is the
+ * sort of thing that never feels urgent and therefore never happens. That is
+ * exactly why they belong on a day with room in it.
+ */
+const PROACTIVE: { title: string; kind: BlockKind; minutes: number; area: string; why: string }[] = [
+  {
+    title: 'Personal brand — make something', kind: 'brand', minutes: 60, area: 'brand',
+    why: 'The slowest-compounding thing you do and the first to get dropped.',
+  },
+  {
+    title: 'Prospecting — three real pitches', kind: 'own', minutes: 45, area: 'business',
+    why: 'New clients are the only thing that actually moves monthly revenue, and they never arrive on a deadline.',
+  },
+  {
+    title: 'Lyne MTB', kind: 'own', minutes: 60, area: 'life',
+    why: 'It only ever gets the leftovers, so a day with leftovers is the day to give it some.',
+  },
+  {
+    title: 'Admin — invoices and the inbox', kind: 'admin', minutes: 30, area: 'business',
+    why: 'Half an hour now, or a bad hour on a day you cannot spare it.',
+  },
+  {
+    title: 'Client follow-ups', kind: 'own', minutes: 30, area: 'business',
+    why: 'The cheapest revenue there is. Existing clients answer faster than new ones.',
+  },
+  {
+    title: 'Sharpen something', kind: 'own', minutes: 45, area: 'business',
+    why: 'A tool, a workflow, a skill. The thing you keep saying you will get to.',
+  },
+];
 
 const MEAL = { breakfast: 30, lunch: 45, dinner: 60 };
 const WORK_CHUNK = 105;      // the longest useful single stretch
@@ -453,8 +487,8 @@ export function buildDay(i: PlanInputs): DayPlan {
     || placed.some((b) => b.kind === 'ski' && b.end - b.start >= 4 * 60);
 
   const capMinutes = raceToday ? 0 : Math.round(s.workCapH * 60);
-  const rpmMinutes = isWorkday && !raceToday ? Math.round(s.rpmDailyH * 60) : 0;
-  const ownDemands = requiredToday(i.jobs, i.day, Math.max(0, capMinutes - rpmMinutes));
+  const targetMinutes = isWorkday && !raceToday ? Math.round(s.workDailyH * 60) : 0;
+  const ownDemands = requiredToday(i.jobs, i.day, capMinutes);
 
   if (raceToday) {
     const owed = requiredToday(i.jobs, i.day, 10 * 60);
@@ -467,20 +501,18 @@ export function buildDay(i: PlanInputs): DayPlan {
 
   const workQueue: { minutes: number; title: string; kind: BlockKind; job?: Job; why: string }[] = [];
 
-  // Whatever is already on the page — done, skipped or locked — comes off what
-  // is still owed. Without this, ticking a block off simply moved it.
-  const rpmSettled = settled.minutesFor((b) => b.kind === 'work' && b.title === 'RPM');
-  const rpmLeft = Math.max(0, rpmMinutes - rpmSettled);
-  if (rpmLeft >= WORK_MIN_CHUNK) {
-    workQueue.push({
-      minutes: rpmLeft,
-      title: 'RPM',
-      kind: 'work',
-      why: rpmSettled > 0
-        ? `${hm(rpmSettled)} of the ${hm(rpmMinutes)} RPM budget is already accounted for. This is the rest of it.`
-        : `${hm(rpmMinutes)} is the day's RPM budget. You set your own hours, so the planner places it where the day allows rather than assuming a fixed nine-to-five.`,
-    });
-  }
+  /**
+   * Real work first, always.
+   *
+   * There used to be a generic "RPM" block that appeared every weekday whether
+   * or not there was anything in it. That is the shape of a timetable, not a
+   * plan: it told you to work for seven hours without ever saying on what, and
+   * a block with no content in it is a block you learn to ignore.
+   *
+   * So the day is built from actual jobs with actual deadlines. If those do not
+   * fill the target, the gap is NOT padded with a nameless work block — it gets
+   * offered to the proactive list below, or it stays free.
+   */
   for (const d of ownDemands) {
     const already = settled.forJob(d.job.id);
     const left = Math.max(0, d.today - already);
@@ -492,6 +524,44 @@ export function buildDay(i: PlanInputs): DayPlan {
       job: d.job,
       why: already > 0 ? `${hm(already)} already down today. ${d.reason}` : d.reason,
     });
+  }
+
+  /* --------------------------------------- the light day: be proactive */
+
+  const committedMinutes =
+    workQueue.reduce((a, x) => a + x.minutes, 0)
+    + settled.minutesFor((b) => b.kind === 'work' || b.kind === 'own' || b.kind === 'brand');
+
+  const shortfall = Math.max(0, targetMinutes - committedMinutes);
+
+  if (shortfall >= 45 && !raceToday) {
+    // Rotate the offer by the date so it is not the same suggestion every day,
+    // and take at most two. A list of six things to "be proactive" about is a
+    // list nobody reads.
+    const seed = Math.floor(new Date(i.day + 'T12:00:00Z').getTime() / 86_400_000);
+    const pool = PROACTIVE.filter((x) => !settled.hasTitle(x.title));
+    let offered = 0;
+    let room = Math.min(shortfall, 150);
+    for (let n = 0; n < pool.length && offered < 2 && room >= 30; n++) {
+      const x = pool[(seed + n) % pool.length];
+      if (x.minutes > room) continue;
+      const goal = i.goals.find((g) => g.area === x.area && g.status === 'active');
+      workQueue.push({
+        minutes: x.minutes,
+        title: x.title,
+        kind: x.kind,
+        why: goal
+          ? `${x.why} Nothing urgent is due today, and this is the only thing on the page that moves "${goal.title}".`
+          : `${x.why} Nothing urgent is due today.`,
+      });
+      room -= x.minutes;
+      offered++;
+    }
+    if (offered > 0) {
+      notes.push(
+        `Only ${hm(committedMinutes)} of work genuinely has to happen today against a ${hm(targetMinutes)} target. The rest has not been padded out with a nameless block — it is offered to ${offered === 1 ? 'one proactive thing' : 'two proactive things'}, and whatever you do not take stays free.`,
+      );
+    }
   }
 
   let workMinutes = 0;
@@ -583,19 +653,9 @@ export function buildDay(i: PlanInputs): DayPlan {
             : 'There is real room tonight and nothing that has to go in it. Seeing people is a legitimate use of an evening, and it is the first thing that quietly disappears from a year like this one.',
         }));
       }
-    } else {
-      // The highest-value optional thing, chosen against a live goal rather
-      // than invented to fill a gap.
-      const brandGoal = i.goals.find((g) => g.area === 'brand' && g.status === 'active');
-      const spot = findSpan(freeNow, 60, toMin('16:30'));
-      if (spot && brandGoal) {
-        const start = Math.max(spot.start, Math.min(toMin('16:30'), spot.end - 60));
-        placed.push(block(start, start + 60, 'brand', 'Personal brand — make something', {
-          goalId: brandGoal.id,
-          why: `There is genuine room today and nothing urgent to put in it. An hour here is the only thing on this page that moves "${brandGoal.title}".`,
-        }));
-      }
     }
+    // The proactive layer above already offers the useful optional work, so
+    // there is deliberately nothing else here. What is left stays free.
   }
 
   /* --------------------------------------------- what is left is free time */
